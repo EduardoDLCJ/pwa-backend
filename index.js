@@ -5,7 +5,9 @@ const cors = require('cors');
 const app = express(); 
 const PORT = process.env.PORT || 4001;
 
+
 const userRoutes = require('./rutas/usuarios');
+const carritoRoutes = require('./rutas/carrito');
 
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Conexión exitosa a MongoDB'))
@@ -35,6 +37,7 @@ pingDatabase();
 
 app.use(cors());
 app.use(express.json());
+app.use('/carrito', carritoRoutes);
 app.use('/users', userRoutes);
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Servidor escuchando en puerto ${PORT}`));
