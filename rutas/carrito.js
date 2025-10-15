@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Carrito = require('../modelos/carrito');
+const { notifyAll } = require('./notificaciones');
 
 // Crear o actualizar carrito (agregar producto)
 router.post('/', async (req, res) => {
@@ -22,6 +23,17 @@ router.post('/', async (req, res) => {
         } else {
             carrito = new Carrito({ userId, items });
             await carrito.save();
+        }
+        try {
+            // Notificar a todos que el carrito fue actualizado
+            await notifyAll({
+                title: 'Carrito actualizado',
+                body: 'Se agregó un producto a tu carrito',
+                icon: '/icon-192.svg',
+                url: '/'
+            });
+        } catch (e) {
+            // No bloquear la respuesta por fallas de notificación
         }
         res.status(200).json(carrito);
     } catch (error) {

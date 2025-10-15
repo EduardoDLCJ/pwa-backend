@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 4001;
 
 const userRoutes = require('./rutas/usuarios');
 const carritoRoutes = require('./rutas/carrito');
+const { router: notificacionesRoutes, notifyAll } = require('./rutas/notificaciones');
 
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Conexión exitosa a MongoDB'))
@@ -39,5 +40,6 @@ app.use(cors());
 app.use(express.json());
 app.use('/carrito', carritoRoutes);
 app.use('/users', userRoutes);
+app.use('/notificaciones', notificacionesRoutes); // monta /vapidPublicKey, /subscribe, /notify
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Servidor escuchando en puerto ${PORT}`));
