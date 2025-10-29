@@ -83,7 +83,16 @@ app.post("/api/send-push", async (req, res) => {
     const { userId, title, body } = req.body || {};
     const query = userId ? { userId } : {};
     const subs = await Subscription.find(query);
-    const payload = JSON.stringify({ title, body });
+    let finalBody = body;
+    if (userId) {
+      try {
+        const user = await User.findById(userId).lean();
+        if (user && user.username) {
+          finalBody = `${user.username}: ${body || ''}`.trim();
+        }
+      } catch (_) {}
+    }
+    const payload = JSON.stringify({ title, body: finalBody });
     for (const sub of subs) {
       try {
         await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);

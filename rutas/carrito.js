@@ -3,6 +3,7 @@ const router = express.Router();
 const Carrito = require('../modelos/carrito');
 const Subscription = require('../modelos/subscription');
 const webpush = require('../webpush');
+const User = require('../modelos/users');
 
 // Crear o actualizar carrito (agregar producto)
 router.post('/', async (req, res) => {
@@ -29,11 +30,16 @@ router.post('/', async (req, res) => {
         try {
             const subs = await Subscription.find({ userId });
             if (subs && subs.length > 0) {
+                let userName = 'Usuario';
+                try {
+                    const user = await User.findById(userId).lean();
+                    if (user && user.username) userName = user.username;
+                } catch (_) {}
                 const added = items && items[0] ? items[0] : null;
                 const productText = added ? `${added.productId} x${added.quantity}` : 'Producto agregado';
                 const payload = JSON.stringify({
                     title: '🛒 Producto agregado al carrito',
-                    body: productText
+                    body: `${userName}: ${productText}`
                 });
                 for (const sub of subs) {
                     try {
