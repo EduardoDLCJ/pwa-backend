@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Carrito = require('../modelos/carrito');
+const Subscription = require('../modelos/subscription');
+const webpush = require('../webpush');
 
 // Crear o actualizar carrito (agregar producto)
 router.post('/', async (req, res) => {
@@ -22,6 +24,27 @@ router.post('/', async (req, res) => {
         } else {
             carrito = new Carrito({ userId, items });
             await carrito.save();
+        }
+        // Enviar notificación push a este usuario si tiene suscripción
+        try {
+            const subs = await Subscription.find({ userId });
+            if (subs && subs.length > 0) {
+                const added = items && items[0] ? items[0] : null;
+                const productText = added ? `${added.productId} x${added.quantity}` : 'Producto agregado';
+                const payload = JSON.stringify({
+                    title: '🛒 Producto agregado al carrito',
+                    body: productText
+                });
+                for (const sub of subs) {
+                    try {
+                        await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);
+                    } catch (e) {
+                        // continuar con siguientes
+                    }
+                }
+            }
+        } catch (e) {
+            // no bloquear respuesta por errores de push
         }
         res.status(200).json(carrito);
     } catch (error) {

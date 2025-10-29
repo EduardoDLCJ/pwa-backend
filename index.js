@@ -4,24 +4,18 @@ require('dotenv').config();
 const cors = require('cors');
 const app = express(); 
 const PORT = process.env.PORT || 4001;
-const webpush = require('web-push');
 const bodyParser = require('body-parser');
+const webpush = require('./webpush');
 
 
-// (coloca las tuyas aquí)
-const publicVapidKey = "BBR2W5ZrA8jgnh1dB_vbVAzu4PVS5t81sXyv_B-bdbkUCUd0d-ZglMsXTHcJTIRa7RY9erDAcm0NlkYkZnZ2DgY";
-const privateVapidKey = "BIdljMrJYmsTBR27TdujeT8vZtxzStasvFIu__7W8OU";
-
-webpush.setVapidDetails(
-  "mailto:tucorreo@ejemplo.com",
-  publicVapidKey,
-  privateVapidKey
-);
+// webpush ya está configurado en ./webpush
 
 
 
 const userRoutes = require('./rutas/usuarios');
 const carritoRoutes = require('./rutas/carrito');
+const Subscription = require('./modelos/subscription');
+const User = require('./modelos/users');
 
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Conexión exitosa a MongoDB'))
@@ -50,52 +44,58 @@ setInterval(pingDatabase, 10000);
 pingDatabase();
 
 
-// ---- Modelo de Suscripción ----
-const SubscriptionSchema = new mongoose.Schema({
-  endpoint: String,
-  keys: Object,
-});
-const Subscription = mongoose.model("Subscription", SubscriptionSchema);
+// Middlewares antes de endpoints
+app.use(cors());
+app.use(express.json());
+app.use(bodyParser.json());
 
-// ---- Guardar Suscripción desde el frontend ----
+// ---- Guardar Suscripción desde el frontend (por usuario) ----
 app.post("/api/subscribe", async (req, res) => {
-  const subscription = req.body;
+  try {
+    const { userId, subscription } = req.body || {};
+    if (!userId || !subscription || !subscription.endpoint || !subscription.keys) {
+      return res.status(400).json({ message: 'Parámetros inválidos' });
+    }
 
-  await Subscription.findOneAndUpdate(
-    { endpoint: subscription.endpoint },
-    subscription,
-    { upsert: true }
-  );
+    const saved = await Subscription.findOneAndUpdate(
+      { userId },
+      {
+        userId,
+        endpoint: subscription.endpoint,
+        keys: subscription.keys
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-  res.status(201).json({ message: "Suscripción guardada." });
+    // Marcar usuario como suscrito
+    await User.findByIdAndUpdate(userId, { notificationSubscribed: 'true' }).catch(() => {});
+
+    return res.status(201).json({ message: 'Suscripción guardada', subscription: saved });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error guardando suscripción', error: err.message });
+  }
 });
 
 
 // ---- Enviar notificación ----
 app.post("/api/send-push", async (req, res) => {
-  const { title, body } = req.body;
-
-  const allSubs = await Subscription.find();
-
-  const payload = JSON.stringify({
-    title,
-    body,
-  });
-
-  for (let sub of allSubs) {
-    try {
-      await webpush.sendNotification(sub, payload);
-    } catch (err) {
-      console.error("Error al enviar push:", err);
+  try {
+    const { userId, title, body } = req.body || {};
+    const query = userId ? { userId } : {};
+    const subs = await Subscription.find(query);
+    const payload = JSON.stringify({ title, body });
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);
+      } catch (err) {
+        console.error('Error al enviar push:', err);
+      }
     }
+    return res.json({ message: 'Notificaciones enviadas.', count: subs.length });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error enviando push', error: err.message });
   }
-
-  res.json({ message: "Notificaciones enviadas." });
 });
-
-app.use(bodyParser.json());
-app.use(cors());
-app.use(express.json());
 app.use('/carrito', carritoRoutes);
 app.use('/users', userRoutes);
 
