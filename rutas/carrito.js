@@ -26,7 +26,7 @@ router.post('/', async (req, res) => {
             carrito = new Carrito({ userId, items });
             await carrito.save();
         }
-        // Enviar notificación push a este usuario si tiene suscripción
+        // Enviar notificación push a este usuario si tiene suscripción (a todos sus dispositivos)
         try {
             const subs = await Subscription.find({ userId });
             if (subs && subs.length > 0) {
@@ -41,16 +41,27 @@ router.post('/', async (req, res) => {
                     title: '🛒 Producto agregado al carrito',
                     body: `${userName}: ${productText}`
                 });
+                
+                const invalidSubs = [];
                 for (const sub of subs) {
                     try {
                         await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);
                     } catch (e) {
-                        // continuar con siguientes
+                        // Si la suscripción es inválida, marcarla para eliminar
+                        if (e.statusCode === 410 || e.statusCode === 404) {
+                            invalidSubs.push(sub._id);
+                        }
                     }
+                }
+                
+                // Eliminar suscripciones inválidas
+                if (invalidSubs.length > 0) {
+                    await Subscription.deleteMany({ _id: { $in: invalidSubs } });
                 }
             }
         } catch (e) {
             // no bloquear respuesta por errores de push
+            console.error('Error enviando notificaciones push:', e);
         }
         res.status(200).json(carrito);
     } catch (error) {
