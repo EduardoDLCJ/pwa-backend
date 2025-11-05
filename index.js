@@ -154,6 +154,122 @@ app.post("/api/send-push", async (req, res) => {
     return res.status(500).json({ message: 'Error enviando push', error: err.message });
   }
 });
+// ---- Middleware para verificar si es adminuser ----
+const checkAdmin = async (req, res, next) => {
+  try {
+    // Obtener adminUsername de body (POST) o query (GET)
+    const adminUsername = req.body?.adminUsername || req.query?.adminUsername;
+    if (!adminUsername) {
+      return res.status(401).json({ message: 'Nombre de usuario requerido' });
+    }
+    const adminUser = await User.findOne({ username: adminUsername });
+    if (!adminUser || adminUsername !== 'adminuser') {
+      return res.status(403).json({ message: 'Acceso denegado. Solo adminuser puede realizar esta acción.' });
+    }
+    req.adminUser = adminUser;
+    next();
+  } catch (err) {
+    return res.status(500).json({ message: 'Error verificando permisos', error: err.message });
+  }
+};
+
+// ---- Obtener lista de usuarios (solo adminuser) ----
+app.get("/api/admin/users", checkAdmin, async (req, res) => {
+  try {
+    const users = await User.find({}, { password: 0 }).lean();
+    const usersWithSubscriptions = await Promise.all(
+      users.map(async (user) => {
+        const subs = await Subscription.find({ userId: user._id });
+        return {
+          ...user,
+          subscriptionCount: subs.length,
+          hasSubscriptions: subs.length > 0
+        };
+      })
+    );
+    return res.json({ users: usersWithSubscriptions, total: usersWithSubscriptions.length });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error obteniendo usuarios', error: err.message });
+  }
+});
+
+// ---- Enviar notificación a usuarios específicos (solo adminuser) ----
+app.post("/api/admin/send-notifications", checkAdmin, async (req, res) => {
+  try {
+    const { userIds, title, body, sendToAll } = req.body || {};
+    
+    if (!title || !body) {
+      return res.status(400).json({ message: 'Título y mensaje son requeridos' });
+    }
+
+    let query = {};
+    
+    if (sendToAll) {
+      // Enviar a todos los usuarios con suscripciones
+      query = {};
+    } else if (userIds && Array.isArray(userIds) && userIds.length > 0) {
+      // Enviar a usuarios específicos
+      query = { userId: { $in: userIds } };
+    } else {
+      return res.status(400).json({ message: 'Debes especificar userIds o enviar a todos (sendToAll: true)' });
+    }
+
+    const subs = await Subscription.find(query).populate('userId', 'username email');
+    
+    if (subs.length === 0) {
+      return res.status(404).json({ message: 'No se encontraron suscripciones para los usuarios seleccionados' });
+    }
+
+    const payload = JSON.stringify({ title, body });
+    
+    let sentCount = 0;
+    let failedCount = 0;
+    const invalidSubs = [];
+    const results = [];
+
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload);
+        sentCount++;
+        results.push({
+          userId: sub.userId?._id,
+          username: sub.userId?.username,
+          success: true
+        });
+      } catch (err) {
+        failedCount++;
+        results.push({
+          userId: sub.userId?._id,
+          username: sub.userId?.username,
+          success: false,
+          error: err.message
+        });
+        // Si la suscripción es inválida (410 Gone, 404 Not Found), marcarla para eliminar
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          invalidSubs.push(sub._id);
+        }
+      }
+    }
+    
+    // Eliminar suscripciones inválidas
+    if (invalidSubs.length > 0) {
+      await Subscription.deleteMany({ _id: { $in: invalidSubs } });
+      console.log(`Eliminadas ${invalidSubs.length} suscripciones inválidas`);
+    }
+    
+    return res.json({ 
+      message: 'Notificaciones procesadas.', 
+      total: subs.length,
+      sent: sentCount,
+      failed: failedCount,
+      invalidRemoved: invalidSubs.length,
+      results
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error enviando notificaciones', error: err.message });
+  }
+});
+
 app.use('/carrito', carritoRoutes);
 app.use('/users', userRoutes);
 
